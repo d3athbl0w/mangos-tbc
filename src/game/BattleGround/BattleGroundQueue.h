@@ -43,6 +43,7 @@ struct GroupQueueInfo                                       // stores informatio
 {
     GroupQueueInfoPlayers players;                          // player queue info map
     Team  groupTeam;                                        // Player team (ALLIANCE/HORDE)
+    Team  OGroupTeam;                                       // Original player team (ALLIANCE/HORDE)
     BattleGroundTypeId bgTypeId;                            // battleground type id
     BattleGroundBracketId bgBracketId;                      // battleground bracked id
     bool    isRated;                                        // rated
@@ -142,6 +143,10 @@ class BattleGroundQueueItem
         bool GetPlayerGroupInfoData(ObjectGuid /*guid*/, GroupQueueInfo* /*groupInfo*/);
         void PlayerInvitedToBgUpdateAverageWaitTime(GroupQueueInfo* /*groupInfo*/, BattleGroundBracketId /*bracketId*/);
         uint32 GetAverageQueueWaitTime(GroupQueueInfo* /*groupInfo*/, BattleGroundBracketId /*bracketId*/);
+
+        bool CheckMixedMatch(BattleGround* bgTemplate, BattleGroundBracketId bracketId, uint32 minPlayers, uint32 maxPlayers);
+        bool MixPlayersToBG(BattleGround* bg, BattleGroundBracketId bracketId);
+        bool CFBGGroupInserter(BattleGround* bgTemplate, BattleGroundBracketId bracketId, uint32 minPlayers, uint32 maxPlayers, uint32 minplayers);
 
     private:
         typedef std::map<ObjectGuid, PlayerQueueInfo> QueuedPlayersMap;

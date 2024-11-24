@@ -973,6 +973,8 @@ bool Player::Create(uint32 guidlow, const std::string& name, uint8 race, uint8 c
     }
     // all item positions resolved
 
+    SetFakeValues();
+
     return true;
 }
 
@@ -15122,6 +15124,8 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder* holder)
     setFactionForRace(getRace());
     SetCharm(nullptr);
 
+    SetFakeValues();
+
     // load home bind and check in same time class/race pair, it used later for restore broken positions
     if (!_LoadHomeBind(holder->GetResult(PLAYER_LOGIN_QUERY_LOADHOMEBIND)))
     {
@@ -16734,7 +16738,7 @@ void Player::SaveToDB()
     uberInsert.addUInt32(GetGUIDLow());
     uberInsert.addUInt32(GetSession()->GetAccountId());
     uberInsert.addString(m_name);
-    uberInsert.addUInt8(getRace());
+    uberInsert.addUInt8(getORace());
     uberInsert.addUInt8(getClass());
     uberInsert.addUInt8(getGender());
     uberInsert.addUInt32(GetLevel());
@@ -17719,6 +17723,18 @@ void Player::RemovePet(PetSaveMode mode)
         if (NewPet)
             NewPet->Unsummon(mode, this);
     }
+}
+
+void Player::BuildPlayerChat(WorldPacket* data, uint8 msgtype, const std::string& text, uint32 language) const
+{
+    *data << uint8(msgtype);
+    *data << uint32(language);
+    *data << ObjectGuid(GetObjectGuid());
+    *data << uint32(0);                                     // 2.1.0
+    *data << ObjectGuid(GetObjectGuid());
+    *data << uint32(text.length() + 1);
+    *data << text;
+    *data << uint8(GetChatTag());
 }
 
 void Player::Say(const std::string& text, const uint32 language) const
@@ -20022,6 +20038,12 @@ BattleGround* Player::GetBattleGround() const
 {
     if (GetBattleGroundId() == 0)
         return nullptr;
+
+    if (!GetMap())
+    {
+        sLog.outError("Player %s tried to access a null map in GetBattleGround()", GetName());
+        return nullptr;
+    }
 
     return GetMap()->GetBG();
 }
@@ -22407,4 +22429,161 @@ uint32 Player::LookupHighestLearnedRank(uint32 spellId)
             break;
     } while ((higherRank = sSpellMgr.GetNextSpellInChain(ownedRank)));
     return ownedRank;
+}
+
+void Player::CFJoinBattleGround()
+{
+    if (!sWorld.getConfig(CONFIG_BOOL_CFBG_ENABLED))
+        return;
+
+    FixLanguageSkills();
+
+    if (!NativeTeam())
+    {
+        SetByteValue(UNIT_FIELD_BYTES_0, 0, getFRace());
+        setFaction(getFFaction());
+    }
+
+    FakeDisplayID();
+
+    sWorld.InvalidatePlayerDataToAllClient(this->GetObjectGuid());
+}
+
+void Player::CFLeaveBattleGround()
+{
+    if (!sWorld.getConfig(CONFIG_BOOL_CFBG_ENABLED))
+        return;
+
+    FixLanguageSkills(true, true);
+
+    SetByteValue(UNIT_FIELD_BYTES_0, 0, getORace());
+    setFaction(getOFaction());
+    InitDisplayIds();
+
+    sWorld.InvalidatePlayerDataToAllClient(GetObjectGuid());
+}
+
+void Player::FakeDisplayID()
+{
+    if (!sWorld.getConfig(CONFIG_BOOL_CFBG_ENABLED))
+        return;
+
+    PlayerInfo const* info = sObjectMgr.GetPlayerInfo(getRace(), getClass());
+    if (!info)
+        for (uint32 i = 1; i <= CLASS_DRUID; i++)
+            if ((info = sObjectMgr.GetPlayerInfo(getRace(), i)))
+                break;
+
+    if (!info)
+    {
+        sLog.outError("Player %u has incorrect race/class pair. Can't init display ids.", GetGUIDLow());
+        return;
+    }
+
+    SetObjectScale(DEFAULT_OBJECT_SCALE);
+
+    uint8 gender = getGender();
+    switch (gender)
+    {
+    case GENDER_FEMALE:
+        SetDisplayId(info->displayId_f);
+        SetNativeDisplayId(info->displayId_f);
+        break;
+    case GENDER_MALE:
+        SetDisplayId(info->displayId_m);
+        SetNativeDisplayId(info->displayId_m);
+        break;
+    default:
+        sLog.outError("Invalid gender %u for player", gender);
+        return;
+    }
+}
+
+void Player::FixLanguageSkills(bool force, bool native)
+{
+    if (!sWorld.getConfig(CONFIG_BOOL_CFBG_ENABLED))
+        return;
+
+    if (!force)
+        native = NativeTeam();
+
+    // SpellId, OriginalSpell
+    auto spells = std::unordered_map<uint32, bool>();
+
+    for (auto& i : sObjectMgr.GetPlayerInfo(getORace(), getClass())->spell)
+        if (auto spell = sSpellTemplate.LookupEntry<SpellEntry>(i))
+            if (spell->Effect[0] == SPELL_EFFECT_LANGUAGE)
+                spells[spell->Id] = true;
+
+    for (auto& i : sObjectMgr.GetPlayerInfo(getFRace(), getClass())->spell)
+        if (auto spell = sSpellTemplate.LookupEntry<SpellEntry>(i))
+            if (spell->Effect[0] == SPELL_EFFECT_LANGUAGE)
+                spells[spell->Id] = false;
+
+    for (auto& i : spells)
+    {
+        if (i.second == native)
+            learnSpell(i.first, true);
+        else
+            this->removeSpell(i.first);
+    }
+}
+
+void Player::SetFakeValues()
+{
+    m_oRace = GetByteValue(UNIT_FIELD_BYTES_0, 0);
+    m_oFaction = GetUInt32Value(UNIT_FIELD_FACTIONTEMPLATE);
+
+    m_fRace = 0;
+
+    while (m_fRace == 0)
+    {
+        for (uint8 i = RACE_HUMAN; i <= RACE_DRAENEI; ++i)
+        {
+            if (i == RACE_GOBLIN)
+                continue;
+
+            PlayerInfo const* info = sObjectMgr.GetPlayerInfo(i, getClass());
+            if (!info || Player::TeamForRace(i) == GetOTeam())
+                continue;
+
+            if (urand(0, 5) == 0)
+                m_fRace = i;
+        }
+    }
+
+    m_fFaction = Player::getFactionForRace(m_fRace);
+}
+
+bool Player::SendBattleGroundChat(uint32 msgtype, std::string message)
+{
+    // Select distance to broadcast to.
+    float distance = msgtype == CHAT_MSG_SAY ? sWorld.getConfig(CONFIG_FLOAT_LISTEN_RANGE_SAY) : sWorld.getConfig(CONFIG_FLOAT_LISTEN_RANGE_YELL);
+
+    if (BattleGround* pBattleGround = GetBattleGround())
+    {
+        if (pBattleGround->IsArena()) // Only fake chat in BG's. CFBG should not interfere with arenas.
+            return false;
+
+        for (BattleGround::BattleGroundPlayerMap::const_iterator itr = pBattleGround->GetPlayers().begin(); itr != pBattleGround->GetPlayers().end(); ++itr)
+        {
+            if (Player* pPlayer = sObjectMgr.GetPlayer(itr->first))
+            {
+                if (GetDistance2d(pPlayer->GetPositionX(), pPlayer->GetPositionY()) <= distance)
+                {
+                    WorldPacket data(SMSG_MESSAGECHAT, 200);
+
+                    if (GetTeam() == pPlayer->GetTeam())
+                        BuildPlayerChat(&data, msgtype, message, LANG_UNIVERSAL);
+                    else if (msgtype != CHAT_MSG_EMOTE)
+                        BuildPlayerChat(&data, msgtype, message, pPlayer->GetOTeam() == ALLIANCE ? LANG_ORCISH : LANG_COMMON);
+
+                    pPlayer->GetSession()->SendPacket(data);
+                }
+            }
+        }
+        return true;
+    }
+    else
+        return false;
 }

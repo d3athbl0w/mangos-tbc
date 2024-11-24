@@ -1199,6 +1199,8 @@ void BattleGround::RemovePlayerAtLeave(ObjectGuid playerGuid, bool isOnTransport
 
     if (player)
     {
+        player->CFLeaveBattleGround();
+
         // Remove flag set in BattleGround::BlockMovement()
         player->RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_CLIENT_CONTROL_LOST);
 
@@ -1380,6 +1382,8 @@ void BattleGround::StartBattleGround()
 */
 void BattleGround::AddPlayer(Player* player)
 {
+    player->CFJoinBattleGround();
+
     // remove afk from player
     if (player->isAFK())
         player->ToggleAFK();

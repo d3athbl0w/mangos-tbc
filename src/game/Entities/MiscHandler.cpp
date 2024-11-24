@@ -153,6 +153,12 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recv_data)
     {
         Player* pl = itr->second;
 
+        if (!pl->IsInWorld() || !pl->GetMap())
+        {
+            sLog.outError("Skipping player %s as they are not in a valid map", pl->GetName());
+            continue;
+        }
+
         if (security == SEC_PLAYER)
         {
             // player can see member of other team only if CONFIG_BOOL_ALLOW_TWO_SIDE_WHO_LIST
